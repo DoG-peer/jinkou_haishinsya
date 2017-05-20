@@ -1,11 +1,6 @@
-import pickle
-import os
-import math
 import re
 
 import numpy as np
-from PIL import Image
-
 import tensorflow as tf
 from tensorflow.contrib import layers
 
@@ -16,23 +11,28 @@ def straight_log(x, k):
 def non_color_loss(x):
   return tf.reduce_mean(tf.maximum(x * x - 1, 0))
 
+def leaky_relu(x, alpha=0.01):
+  return tf.where(x > 0, x, alpha * x)
+
 class Generator:
-  def __init__(self):
+  def __init__(self, size=96):
     self.output = None
+    self.size = size
 
   def __call__(self, zs, is_training=False, reuse=False):
-    # zs.shape: [*, nz]
-    nz = zs.get_shape().as_list()[-1]
-    s = 6
+    s = self.size // (2**4)
     # s = 2
     h = layers.fully_connected(zs, s * s * 512,
+        weights_initializer=_initializer,
+        weights_regularizer=layers.l2_regularizer(1e-5),
+        biases_regularizer=layers.l2_regularizer(1e-5),
         normalizer_fn=layers.batch_norm,
         normalizer_params=_bn_params("bn_gen_fc", is_training, reuse),
-        weights_initializer=_initializer,
         reuse=reuse,
         scope="generator_fc")
     h = tf.reshape(h, [-1, s, s, 512])
-    input_dims = [512, 256, 128, 64]
+    # chainer-DCGAN
+    # input_dims = [512, 256, 128, 64]
     output_dims = [256, 128, 64, 3]
     for i in range(4):
       h = layers.conv2d_transpose(
@@ -40,21 +40,23 @@ class Generator:
           stride=2, padding="SAME",
           weights_initializer=_initializer_deconv,
           weights_regularizer=layers.l2_regularizer(1e-5),
+          biases_regularizer=layers.l2_regularizer(1e-5),
           normalizer_fn=layers.batch_norm if i != 3 else None,
           normalizer_params=_bn_params("bn_gen_%d" % i, is_training, reuse) if i != 3 else None,
           activation_fn=tf.nn.relu if i != 3 else None,
           reuse=reuse,
           scope="generator_conv_%02d" % i)
-      # print(h)
     self.output = h
-    # self.output = tf.tan(h)
+    # self.output = tf.tanh(h)
     # self.output = tf.tanh(h) * 2
     return self.output  # shape: [*, h, w, 3]
 
-  def generate_image(self, sess, n):
-    z = tf.random_uniform([n, 100], -1, 1, dtype=tf.float32)
+  def generate_image(self, sess, n, z=None):
+    if z is None:
+      z = tf.random_uniform([n, 100], -1, 1, dtype=tf.float32)
     out = self(z, is_training=False, reuse=True)
     return _to_imgs(sess.run(out))
+
 
 def _to_imgs(imgs):
   return np.uint8(np.clip((imgs + 1) * 128, 0, 255))
@@ -62,57 +64,63 @@ def _to_imgs(imgs):
 
 def _initializer(shape, dtype, partition_info):
   # stddev = 0.02
+  # stddev = 0.1
   f_in = np.prod(shape[:-1])
-  # stddev = np.sqrt(0.02 / np.sqrt(f_in))
   stddev = np.sqrt(0.02 / np.sqrt(f_in))
   # stddev = np.sqrt(0.02 / f_in)
   return tf.random_normal_initializer(stddev=stddev)(shape, dtype=dtype, partition_info=partition_info)
 
 def _initializer_deconv(shape, dtype, partition_info):
   # stddev = 0.02
+  # stddev = 0.1
   f_in = np.prod(shape[:-2]) * shape[-1]
-  # stddev = np.sqrt(0.02 / np.sqrt(f_in))
   stddev = np.sqrt(0.02 / np.sqrt(f_in))
   # stddev = np.sqrt(0.02 / f_in)
   return tf.random_normal_initializer(stddev=stddev)(shape, dtype=dtype, partition_info=partition_info)
 
 def _bn_params(name, is_training, reuse):
+  """
   bn_params = {'decay': 0.9,
                'is_training': is_training,
                'fused': True,
                'scope': name,
                'reuse': reuse,
-               'epsilon': 2e-5}
-  """
-  bn_params = {'decay': 0.9,
                'scale': True,
+               'epsilon': 2e-5}
+  """
+  bn_params = {'decay': 0.9,
                'is_training': is_training,
                'fused': True,
                'scope': name,
                'reuse': reuse,
                'epsilon': 2e-5}
-  """
   return bn_params
 
 
 class Discriminator:
   def __init__(self):
-    pass
+    self.activation_fn = tf.nn.elu
+    # self.activation_fn = leaky_relu
 
   def __call__(self, x, is_training=False, reuse=False):
     # x.shape: [batch_size, 96, 96, 3]
     h = x
 
-    input_dims = [3, 64, 128, 256]
+    # chainer-DCGAN
+    # input_dims = [3, 64, 128, 256]
     output_dims = [64, 128, 256, 512]
+
+    # input_dims = [3, 32, 64, 128]
+    # output_dims = [32, 64, 128, 256]
     for i in range(4):
       h = layers.conv2d(
           h, output_dims[i], 4, stride=2, padding='SAME',
           weights_initializer=_initializer,
           weights_regularizer=layers.l2_regularizer(1e-5),
-          activation_fn=tf.nn.elu,
+          biases_regularizer=layers.l2_regularizer(1e-5),
+          activation_fn=self.activation_fn,
           normalizer_fn=layers.batch_norm if i != 0 else None,
-          normalizer_params=_bn_params("bn_dis_%d" % i, is_training, reuse) if i != 0 else None,
+          normalizer_params=_bn_params("bn_dic_%d" % i, is_training, reuse) if i != 0 else None,
           reuse=reuse,
           scope="discriminator_conv_%02d" % i)
 
@@ -126,48 +134,43 @@ class Discriminator:
         scope="discriminator_prob")
     """
 
-    #"""
+    # """
     h = layers.flatten(h)
 
     z = layers.fully_connected(
         h, 2,
         weights_initializer=_initializer,
+        weights_regularizer=layers.l2_regularizer(1e-5),
+        biases_regularizer=layers.l2_regularizer(1e-5),
         reuse=reuse,
         activation_fn=None,
         scope="discriminator_fc")
-    #"""
+    # """
 
-    """
-    h = layers.flatten(h)
-
-    stddev = np.sqrt(0.02 / np.sqrt(h.get_shape().as_list()[-1]))
-    # stddev = np.sqrt(0.02 * np.sqrt(h.get_shape().as_list()[-1]))
-    # stddev = 0.02
-    z = layers.fully_connected(
-        h, 1,
-        weights_initializer=tf.random_normal_initializer(stddev=stddev),
-        reuse=reuse,
-        activation_fn=None,  # tf.sigmoid,
-        scope="discriminator_fc")
-    """
     return z  # shape: [batch_size, 2] / [batch_size, 6, 6, 2]
 
 
 class DCGANModel:
-  def __init__(self, z_batch_size=100, nz=100, *params):
+  def __init__(self, z_batch_size=100, size=96, nz=100, *params):
     self._used = False
     self._inputs = []
     self._outputs = {}  # keyは_inputsのオブジェクト、valueは??
-    self._gen = Generator()
+    self._gen = Generator(size)
     self._dis = Discriminator()
     self._z_batch_size = z_batch_size
     self._nz = nz
+    self._size = size
 
   def init(self, sess, logger):
     if logger.checkpoint is not None:
       logger.restore(sess)
     else:
       sess.run(tf.global_variables_initializer())
+
+  def initialize_for_run(self, input_gen):
+    with tf.name_scope("dcgan"):
+      x = self._gen(input_gen)
+    return x
 
   def assgin_input(self, input_layer, is_training=True):
     reuse = self._used
@@ -177,75 +180,26 @@ class DCGANModel:
         z = tf.random_uniform([self._z_batch_size, self._nz], -1, 1, dtype=tf.float32)
         x = self._gen(z, is_training=is_training, reuse=reuse)
 
-        """
-        yl_0 = self._dis(x, is_training=is_training, reuse=reuse)
-        yl_1 = self._dis(input_layer, is_training=is_training, reuse=True)
-        """
-
-        """
-        yl_0_g = self._dis(x, is_training=False, reuse=reuse)
-        yl_0_d = self._dis(x, is_training=is_training, reuse=True)
-        yl_1 = self._dis(input_layer, is_training=is_training, reuse=True)
-        """
-
-        # """
         join = tf.concat([x, input_layer], 0)
         yl = self._dis(join, is_training=is_training, reuse=reuse)
         yl_0 = yl[:self._z_batch_size]
         yl_1 = yl[self._z_batch_size:]
-        # """
 
-        """
-        l_gen = tf.reduce_mean(-tf.nn.log_softmax(yl_0_g)[:, 0])
-        l_dis_0 = tf.reduce_mean(-tf.nn.log_softmax(yl_0_d)[:, 1])
-        l_dis_1 = tf.reduce_mean(-tf.nn.log_softmax(yl_1)[:, 0])
-        """
-
-        """
-        l_gen = - tf.reduce_mean(tf.nn.log_softmax(yl_0)[:, 0])
-        l_dis_0 = - tf.reduce_mean(tf.nn.log_softmax(yl_0)[:, 1])
-        l_dis_1 = - tf.reduce_mean(tf.nn.log_softmax(yl_1)[:, 0])
-        """
-
-        # """
-        epsi = 1e-10
-        # l_gen = - tf.reduce_mean(straight_log(tf.nn.softmax(yl_0), 100)[:, 0])
-        # l_gen = - tf.reduce_mean(tf.log(tf.nn.softmax(yl_0) + epsi)[:, 0])
+        # epsi = 1e-10
         l_gen = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=yl_0, labels=tf.zeros([self._z_batch_size], dtype=tf.int32)))
-        # l_gen = tf.reduce_mean(tf.nn.softmax(yl_0)[:, 1])
-        # l_gen = tf.reduce_mean(tf.tan(tf.nn.softmax(yl_0) * np.pi / 2)[:, 1])
 
         l_dis_0 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=yl_0, labels=tf.ones_like(yl_0[:, 0], dtype=tf.int32)))
-        # l_dis_0 = tf.reduce_mean(tf.nn.softmax(yl_0)[:, 0])
-        # l_dis_0 = tf.reduce_mean(tf.nn.sigmoid(yl_0)[:, 0])
-        # l_dis_0 = - tf.reduce_mean(tf.log(tf.maximum(tf.nn.softmax(yl_0), epsi))[:, 1])
 
         l_dis_1 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=yl_1, labels=tf.zeros_like(yl_0[:, 0], dtype=tf.int32)))
-        # l_dis_1 = tf.reduce_mean(tf.nn.softmax(yl_1)[:, 1])
-        # l_dis_1 = tf.reduce_mean(tf.nn.sigmoid(yl_1)[:, 1])
-        # l_dis_1 = - tf.reduce_mean(tf.log(tf.maximum(tf.nn.softmax(yl_1), epsi))[:, 0])
-        # """
 
-        """
-        epsi = 1e-10
-        l_gen = tf.reduce_mean(-tf.log(yl_0 + epsi))
-        l_dis_0 = tf.reduce_mean(-tf.log(1 - yl_0 + epsi))
-        # l_dis_0 = tf.reduce_mean(tf.log(yl_0 + epsi))
-        l_dis_1 = tf.reduce_mean(-tf.log(yl_1 + epsi))
-        """
-
-        """
-        l_gen = tf.reduce_mean(- yl_0 + tf.log(tf.exp(yl_0) + tf.exp(- yl_0)))
-        l_dis_0 = tf.reduce_mean(yl_0 + tf.log(tf.exp(yl_0) + tf.exp(- yl_0)))
-        l_dis_1 = tf.reduce_mean(- yl_1 + tf.log(tf.exp(yl_1) + tf.exp(- yl_1)))
-        """
-        l_gen = l_gen + non_color_loss(x)
+        l_gen = l_gen  # + non_color_loss(x)
         l_dis = l_dis_0 + l_dis_1
+
         # TODO: 暫定的な実装
         vars_gen = []
         vars_dis = []
         for v in tf.global_variables():
-          # print(v.name, v.get_shape())
+          # print(v.name, v.get_shape(), v in tf.trainable_variables())
           """
           if re.match("bn_", v.name):
             vars_gen.append(v)
@@ -262,15 +216,8 @@ class DCGANModel:
             if v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
               # print("\ttrain")
               vars_dis.append(v)
-        # exit()
-        # train_gen = tf.train.AdamOptimizer(1e-4, beta1=0.5).minimize(l_gen, var_list=vars_gen)
-        # train_dis = tf.train.AdamOptimizer(1e-4, beta1=0.5).minimize(l_dis, var_list=vars_dis)
-        # train_gen = tf.train.AdamOptimizer(2e-4, beta1=0.5).minimize(l_gen, var_list=vars_gen)
+        train_dis = tf.train.AdamOptimizer(1e-4, beta1=0.5).minimize(l_dis, var_list=vars_dis)
         train_gen = tf.train.AdamOptimizer(2e-4, beta1=0.5).minimize(l_gen, var_list=vars_gen)
-        train_dis = tf.train.AdamOptimizer(2e-4, beta1=0.5).minimize(l_dis, var_list=vars_dis)
-
-        # train_gen = tf.train.GradientDescentOptimizer(0.0001).minimize(l_gen, var_list=vars_gen)
-        # train_dis = tf.train.GradientDescentOptimizer(0.0001).minimize(l_dis, var_list=vars_dis)
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         bn_updates = tf.group(*update_ops)
         bn_updates_gen = tf.group(*[v for v in update_ops if v.name.find("/bn_gen_") >= 0])
@@ -297,9 +244,9 @@ class DCGANModel:
     self._used = True
     return self._outputs[input_layer] if is_training else None
 
-  def generate_image(self, sess, n):
+  def generate_image(self, sess, n, z=None):
     # n枚の画像を生成する(nの指定は現状放棄する)
-    return self._gen.generate_image(sess, n)
+    return self._gen.generate_image(sess, n, z)
 
   def restore(self):
     pass
@@ -321,11 +268,11 @@ class DCGANInput:
     # 学習時に使うデータのおよそ半分をbgrで行う
     # 入力のスケールは値が-1から1に入るようにする
     imgs_rgb = tf.cast(imgs_rgb, tf.float32)
-    imgs_bgr = imgs_rgb[..., ::-1]
+    imgs_reverse = imgs_rgb[:, ::-1, :]
     rnd = tf.random_uniform(minval=0, maxval=2, dtype=tf.int32, shape=[self.batch_size])
     rnd = tf.cast(rnd, tf.float32)
     rnd = tf.reshape(rnd, [-1, 1, 1, 1])
-    imgs = imgs_rgb * rnd + imgs_bgr * (1 - rnd)
+    imgs = imgs_rgb * rnd + imgs_reverse * (1 - rnd)
     # imgs = imgs_rgb  # * rnd + imgs_bgr * (1 - rnd)
     imgs = (imgs - 128) / 128
 
