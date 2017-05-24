@@ -1,0 +1,21 @@
+meta:
+  version: 0.0.0
+global:
+model:
+  size: 画像サイズ
+  load_checkpoint: 読み込むチェックポイント
+  nz: 特徴ベクトルの次元
+train:
+  input: 入力データの種類
+  input_path: 学習時にデータのパス
+  n_epoch: エポック数
+  n_train: 1エポックの学習回数
+  batch_size: バッチサイズ
+  image_save_interval: 学習途中画像生成頻度
+  save_dir: 保存するディレクトリ
+  output_image_path: 画像を出力するディレクトリ
+  n_preview: プレビュー時に生成する画像の数
+movie:
+  fps: FPS
+  window_size: ウィンドウの大きさ
+  batch_size: 一度のsession_runで計算する量
