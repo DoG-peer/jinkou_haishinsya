@@ -161,6 +161,11 @@ class DCGANModel:
     self._nz = nz
     self._size = size
 
+  @property
+  def outputs(self):
+    k = list(self._outputs.keys())[0]
+    return self._outputs[k][4:]
+
   def init(self, sess, logger):
     if logger.checkpoint is not None:
       logger.restore(sess)
@@ -250,6 +255,23 @@ class DCGANModel:
 
   def restore(self):
     pass
+
+  def run_train(self, sess, feed_dict):
+    model = self
+    # sess.run([model.bn_updates_gen, model.train_gen,
+    #           model.bn_updates, model.train_dis, model.train_reg], feed_dict)
+    # sess.run([model.bn_updates_gen, model.train_gen, model.bn_updates, model.train_dis], feed_dict)
+    # sess.run([model.bn_updates, model.train_gen, model.train_dis, model.train_reg], feed_dict)
+    # sess.run([model.train_gen, model.train_dis, model.bn_updates, model.train_reg], feed_dict)
+    sess.run([model.train_gen, model.bn_updates_gen], feed_dict)
+    sess.run([model.train_dis, model.bn_updates_dis], feed_dict)
+    # sess.run([model.train_dis, model.bn_updates_dis, model.train_reg], feed_dict)
+    # sess.run([model.train_dis, model.bn_updates, model.train_gen, model.train_reg], feed_dict)
+    # sess.run([model.train_gen, model.train_dis, model.train_reg, model.bn_updates, ], feed_dict)
+    # sess.run([model.train_gen, model.bn_updates_gen], feed_dict)
+    # sess.run([model.train_dis, model.bn_updates, model.train_reg], feed_dict)
+    # sess.run([model.train_gen, model.train_dis, model.bn_updates, model.bn_updates_gen], feed_dict)
+
 
 # TrainInputとRunInputに分ける
 class DCGANInput:

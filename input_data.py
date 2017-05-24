@@ -6,22 +6,30 @@ from model import DCGANInput
 from PIL import Image
 import sys
 
+from hyper_param import get_hyper_param
+
 
 def get_dcgan_input(args):
-  if args.input == "mnist":
-    dcgan_input = MNISTTrainInput(args.img_dir, args.batch_size, args.size, True)
-  elif args.input == "pecamnist":
-    dcgan_input = PecaMNISTInput(args.img_dir, args.batch_size, args.size, True)
-  elif args.input == "celeba":
-    dcgan_input = CelebAInput(args.img_dir, args.batch_size, args.size, True)
-  elif args.input == "memmap":
-    dcgan_input = MemmapInput(args.img_dir, args.batch_size, args.size, True)
-  elif args.input == "jpchars":
-    dcgan_input = JPOldCharsInput(args.img_dir, args.batch_size, args.size, True)
-  elif args.input == "single":
-    dcgan_input = SingleImageInput(args.img_dir, args.batch_size, args.size, True)
+  input_type = get_hyper_param("input", "train")
+  input_path = get_hyper_param("input_path", "train")
+  batch_size = get_hyper_param("batch_size", "train")
+  size = get_hyper_param("size", "model")
+  if input_type == "mnist":
+    dcgan_input = MNISTTrainInput(input_path, batch_size, size, True)
+  elif input_type == "pecamnist":
+    dcgan_input = PecaMNISTInput(input_path, batch_size, size, True)
+  elif input_type == "celeba":
+    dcgan_input = CelebAInput(input_path, batch_size, size, True)
+  elif input_type == "memmap":
+    dcgan_input = MemmapInput(input_path, batch_size, size, True)
+  elif input_type == "jpchars":
+    dcgan_input = JPOldCharsInput(input_path, batch_size, size, True)
+  elif input_type == "single":
+    dcgan_input = SingleImageInput(input_path, batch_size, size, True)
+  elif input_type == "dir_crop":
+    dcgan_input = DirectoryCropTrainInput(input_path, batch_size, size, True)
   else:
-    dcgan_input = DirectoryTrainInput(args.img_dir, args.batch_size, args.size, True)
+    dcgan_input = DirectoryTrainInput(input_path, batch_size, size, True)
   return dcgan_input
 
 
@@ -91,6 +99,52 @@ class DirectoryTrainInput(DCGANInput):
   def feed_dict(self):
     # return {self.imgs_rgb: self.load_images(self.batch_size)}
     return {self.imgs_rgb: self.load_images(self.batch_size)}
+
+
+class DirectoryCropTrainInput(DCGANInput):
+  def __init__(self, data_path, batch_size, size, is_training):
+    self.dir = data_path
+    self.batch_size = batch_size
+    self.size = size
+    self.patch_size_region = (48, 48, 144, 144)  # wmin, hmin, wmax, hmax
+
+    self.is_training = is_training
+    self._img_paths = list(os.listdir(data_path))
+    self._num = len(self._img_paths)
+    # self.imgs_rgb = tf.placeholder(tf.float32, [None, self.h, self.w])
+    self.imgs_rgb = tf.placeholder(tf.float32, [None, size, size, 3])
+    self.input_layer = self.imgs_rgb
+    self._load_all(data_path, self._img_paths)
+    assert self.batch_size <= self._num
+
+  def _load_all(self, dirname, imgs_paths):
+    self._imgs = []
+    for img_path in sorted(imgs_paths):
+      sys.stdout.write("\rloadfing:" + img_path)
+      img = Image.open(os.path.join(dirname, img_path))
+      self._imgs.append(img.convert("RGB"))
+
+  def load_images(self, n):
+    ids = np.random.randint(self._num, size=[n])
+    imgs = [self.random_crop_and_resize(self._imgs[id_]) for id_ in ids]
+    return np.array(imgs)
+
+  def feed_dict(self):
+    # return {self.imgs_rgb: self.load_images(self.batch_size)}
+    return {self.imgs_rgb: self.load_images(self.batch_size)}
+
+  def _imgs_to_train_input(self, imgs_rgb):
+    return (imgs_rgb - 128) / 128
+
+  def random_crop_and_resize(self, image: Image):
+    w, h = image.size
+    crop_w = np.random.randint(self.patch_size_region[0], self.patch_size_region[2])
+    crop_h = np.random.randint(self.patch_size_region[1], self.patch_size_region[3])
+    xmin = np.random.randint(0, w - crop_w)
+    ymin = np.random.randint(0, h - crop_h)
+    xmax = xmin + crop_w
+    ymax = ymin + crop_h
+    return np.array(image.crop((xmin, ymin, xmax, ymax)).resize((self.size, self.size)))
 
 
 class CelebAInput(DCGANInput):
