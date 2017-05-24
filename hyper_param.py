@@ -56,12 +56,12 @@ class HyperParamStore:
 def _detect_loader(input_path):
   # ファイルをロードする方法を決める
   ext = os.path.splitext(input_path)[-1]
-  if ext is ".json":
+  if ext == ".json":
     return lambda file_path: json.load(open(file_path))
-  elif ext is ".yaml" or ext is ".yml":
+  elif ext == ".yaml" or ext == ".yml":
     return lambda file_path: yaml.load(open(file_path))
   else:
-    raise "cannot open {input_path}".format(input_path=input_path)
+    raise Exception("cannot open {input_path}".format(input_path=input_path))
 
 
 def _load_by_ext(input_path):
@@ -72,12 +72,12 @@ def _load_by_ext(input_path):
 def _detect_saver(output_path):
   # ファイルを保存する方法を決める
   ext = os.path.splitext(output_path)[-1]
-  if ext is ".json":
+  if ext == ".json":
     return lambda obj, file_path: json.load(open(output_path))
-  elif ext is ".yaml" or ext is ".yml":
+  elif ext == ".yaml" or ext == ".yml":
     return lambda obj, file_path: yaml.load(open(output_path))
   else:
-    raise "cannot open {output_path}".format(output_path=output_path)
+    raise Exception("cannot open {output_path}".format(output_path=output_path))
 
 
 def _save_object_by_ext(obj, output_path):
@@ -93,7 +93,7 @@ def open_hyper_param(input_path):
   input_path: 入力のパス
   """
   obj = _load_by_ext(input_path)
-  _global_hyper_param_manager.open(obj)
+  _global_hyper_param_manager.load(obj)
 
 
 def save_hyper_param(output_path):
@@ -112,4 +112,14 @@ def get_hyper_param(name, collection=GLOBAL_HYPER_PARAM_COLLECTION, dtype=None):
   collection: ハイパーパラメータの種類
   dtype: パイパーパラメータを利用する際のデータタイプ
   """
+  return _global_hyper_param_manager.get(name, collection, dtype)
+
+
+def get_all():
+  return _global_hyper_param_manager.get_all()
+
+
+def get_hyper_param_or_default(name, collection=GLOBAL_HYPER_PARAM_COLLECTION, dtype=None, default=None):
+  if name not in _global_hyper_param_manager.get_collection(collection):
+    return default
   return _global_hyper_param_manager.get(name, collection, dtype)
