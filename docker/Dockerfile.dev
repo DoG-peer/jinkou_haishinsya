@@ -1,0 +1,36 @@
+FROM jinhai
+
+RUN set -ex \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends \
+    sudo zsh tmux tree less bc curl \
+    ibus-mozc ctags editorconfig \
+    x11-apps
+
+RUN set -ex \
+  && add-apt-repository ppa:neovim-ppa/stable \
+  && apt-get update \
+  && apt-get -y install neovim
+
+RUN set -ex \
+  && python3.6 -m pip install \
+    ipython neovim jedi tox flake8 \
+    dm-sonnet
+
+ENV USERNAME developer
+RUN useradd -m $USERNAME \
+  && echo "$USERNAME:$USERNAME" | chpasswd \
+  && usermod --shell /bin/bash $USERNAME \
+  && usermod -aG sudo $USERNAME \
+  && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/$USERNAME \
+  && chmod 0440 /etc/sudoers.d/$USERNAME \
+  && usermod  --uid 1000 $USERNAME \
+  && groupmod --gid 1000 $USERNAME
+# Replace 1000 with your user/group id
+
+RUN ln -sf /usr/bin/python3.6 /usr/bin/python3 \
+  && ln -sf /usr/bin/python3.6 /usr/bin/python
+
+ENV SHELL=/bin/zsh
+
+WORKDIR /work
